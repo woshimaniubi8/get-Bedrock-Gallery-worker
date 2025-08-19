@@ -51,8 +51,8 @@ export default {
 			//console.log(xuid);
 		}
 		try {
+			const st = await env.TOKEN_KV.get(`sessionTicket`);
 			if (Math.floor((MCtokenexpiryTime - Date.now()) / 1000) - 300 < 0) {
-				const st = await env.TOKEN_KV.get(`sessionTicket`);
 				await this.getAndCacheMCToken(st, env);
 				console.log('MC Token失效，正在尝试获取新Token');
 			}
