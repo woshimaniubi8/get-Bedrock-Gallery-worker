@@ -52,13 +52,13 @@ export default {
 			let mcToken = await env.TOKEN_KV.get('mcToken');
 			const mtt = await env.TOKEN_KV.get('MCtokenexpiryTime');
 			if (Math.floor((mtt - Date.now()) / 1000) - 300 < 0) {
-				mcToken = await (await this.getAndCacheMCToken(st, env)).mcToken;
+				mcToken = await await this.getAndCacheMCToken(st, env);
 				console.info('MC Token失效，正在尝试获取新Token');
 			}
 			// 1. Try to get the MC Token from the cache.
 
 			if (!mcToken) {
-				mcToken = (await this.getAndCacheMCToken(st, env)).mcToken;
+				mcToken = await this.getAndCacheMCToken(st, env);
 			}
 
 			// 2. Use the token to fetch the background image.
@@ -244,7 +244,7 @@ export default {
 		try {
 			let act;
 			// 1. Get a general-purpose Xbox Live API token. This is different from the Minecraft token.
-
+			const agt = await env.TOKEN_KV.get('accessTokenTime');
 			if (Math.floor((agt - Date.now()) / 1000) - 100 < 0) {
 				console.info('AccessToken 失效，尝试获取新Token');
 				act = await this.refreshAccessToken(env);
@@ -297,8 +297,8 @@ export default {
 
 	async getXboxToken(sAccessToken, type, env) {
 		let msAccessToken = sAccessToken;
-		const xtt1 = env.TOKEN_KV.get('Xbox1expiryTime');
-		const xtt = env.TOKEN_KV.get('XboxexpiryTime');
+		const xtt1 = await env.TOKEN_KV.get('Xbox1expiryTime');
+		const xtt = await env.TOKEN_KV.get('XboxexpiryTime');
 		if (Math.floor(((type ? xtt1 : xtt) - Date.now()) / 1000) - 300 > 0) {
 			const tk = await env.TOKEN_KV.get(`XboxToken_${type}`);
 			if (tk) {
@@ -401,6 +401,13 @@ export default {
 
 	async getAndCacheMCToken(sessionTicket, env) {
 		if (!sessionTicket) throw new Error('Token invald,Login first ');
+		const mttt = await env.TOKEN_KV.get('MCtokenexpiryTime');
+		if (Math.floor((mttt - Date.now()) / 1000) - 300 > 0) {
+			const mct = await env.TOKEN_KV.get('mcToken');
+			if (mct) {
+				return mct;
+			}
+		}
 		const response = await fetch('https://authorization.franchise.minecraft-services.net/api/v1.0/session/start', {
 			method: 'POST',
 			headers: { 'Content-Type': 'application/json' },
@@ -424,12 +431,12 @@ export default {
 		const mcToken = data.result.authorizationHeader;
 		const validUntil = data.result.validUntil;
 		const mtt = new Date(validUntil).getTime();
-		env.TOKEN_KV.put('MCtokenexpiryTime', mtt);
+		await env.TOKEN_KV.put('MCtokenexpiryTime', mtt);
 		const now = Date.now();
 		const ttlInSeconds = Math.max(60, Math.floor((mtt - now) / 1000) - 300); // 5 min buffer
 
 		await env.TOKEN_KV.put('mcToken', mcToken, { expirationTtl: ttlInSeconds });
 		console.info(`成功缓存MC Token TTL: ${ttlInSeconds}s`);
-		return { mcToken, validUntil };
+		return mcToken;
 	},
 };
