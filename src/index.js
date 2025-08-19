@@ -48,13 +48,13 @@ export default {
 		}
 		if (!xuid) {
 			xuid = await this.handleGetXuid(gt, env, null);
-			//console.log(xuid);
+			//console.info(xuid);
 		}
 		try {
 			const st = await env.TOKEN_KV.get(`sessionTicket`);
 			if (Math.floor((MCtokenexpiryTime - Date.now()) / 1000) - 300 < 0) {
 				await this.getAndCacheMCToken(st, env);
-				console.log('MC Token失效，正在尝试获取新Token');
+				console.info('MC Token失效，正在尝试获取新Token');
 			}
 			// 1. Try to get the MC Token from the cache.
 			let mcToken = await env.TOKEN_KV.get('mcToken');
@@ -134,7 +134,7 @@ export default {
 		}
 	},
 	async refreshAccessToken(env) {
-		console.log('正在尝试刷新访问令牌');
+		console.info('正在尝试刷新访问令牌');
 		const refreshToken = await env.TOKEN_KV.get('refreshToken');
 		if (!refreshToken) {
 			throw new Error('No refresh token found. Please login again.');
@@ -159,7 +159,7 @@ export default {
 			console.error('刷新AccessToken失败:', tokenData.error_description);
 			// If the refresh token is invalid, you might need to prompt for re-login.
 			// For simplicity here, we'll just throw an error.
-			throw new Error('Could not refresh the access token. Please log in again.');
+			throw new Error('刷新AccessToken失败:' + tokenData.error_description);
 		}
 
 		// Store the new tokens
@@ -167,7 +167,7 @@ export default {
 		await env.TOKEN_KV.put('accessTokenTime', Date.now());
 		await env.TOKEN_KV.put('refreshToken', tokenData.refresh_token);
 
-		console.log('成功刷新AccessToken.');
+		console.info('成功刷新AccessToken.');
 		return tokenData.access_token;
 	},
 	/**
@@ -195,7 +195,7 @@ export default {
 
 				if (tokenResponse.error) {
 					if (tokenResponse.error === 'authorization_pending') {
-						console.log('等待网页登录...');
+						console.info('等待网页登录...');
 						continue;
 					} else {
 						throw new Error(`Error polling for token: ${tokenResponse.error_description}`);
@@ -203,13 +203,13 @@ export default {
 				}
 
 				polling = false;
-				console.log('成功获取AccreeToken');
+				console.info('成功获取AccreeToken');
 
 				const { access_token, refresh_token } = tokenResponse;
 
 				// Store both the access and refresh tokens
 				await env.TOKEN_KV.put('accessToken', access_token, { expirationTtl: 3600 - 100 });
-				await env.TOKEN_KV.put('accessTokenTime', Date.now());
+				await env.TOKEN_KV.put('accessTokenTime', Date.now() + 3600 * 1000 - 100);
 				await env.TOKEN_KV.put('refreshToken', refresh_token);
 
 				const xboxToken = await this.getXboxToken(access_token, 0, env);
@@ -218,15 +218,15 @@ export default {
 				await env.TOKEN_KV.put(`sessionTicket`, sessionTicket);
 				await this.getAndCacheMCToken(sessionTicket, env);
 
-				console.log('Successfully acquired and cached all tokens.');
+				console.info('已成功获取并缓存所有令牌');
 			} catch (e) {
-				console.error('Error during token polling:', e.message);
+				console.error('Err in pollForTokenAndStore() =>', e.message);
 				polling = false;
 			}
 		}
 
 		if (polling) {
-			console.error('Login process timed out. The user did not approve in time.');
+			console.error('等待登录超时');
 		}
 	},
 
@@ -245,11 +245,11 @@ export default {
 		//	try {
 		// 1. Get a general-purpose Xbox Live API token. This is different from the Minecraft token.
 		const act = await env.TOKEN_KV.get('accessToken');
-		//	console.log(act);
+		//	console.info(act);
 		const xboxApiToken = await this.getXboxToken(act, 1, env);
-		//console.log(1222);
+		//console.info(1222);
 		// 2. Call the Xbox Live API to get the profile settings for the given Gamertag.
-		//console.log(xboxApiToken);
+		//console.info(xboxApiToken);
 		const encodedGamertag = encodeURIComponent(gamertag);
 		const res = await fetch(
 			`https://profile.xboxlive.com/users/gt(${encodedGamertag})/profile/settings?settings=GameDisplayName,Gamertag,GameDisplayPicRaw,Gamerscore,TenureLevel`,
@@ -269,7 +269,7 @@ export default {
 		if (!res.ok) {
 			throw new Error(`Failed to get XUID from Xbox API. Status: ${res.status} ${res.statusText}`);
 		}
-		//	console.log(1222);
+		//	console.info(1222);
 		const data = await res.json();
 		const player = data.profileUsers;
 
@@ -293,13 +293,14 @@ export default {
 		if (Math.floor(((type ? Xbox1expiryTime : XboxexpiryTime) - Date.now()) / 1000) - 300 > 0) {
 			const tk = await env.TOKEN_KV.get(`XboxToken_${type}`);
 			if (tk) {
-				console.log('Xbox Token 有效');
+				console.info('Xbox Token 有效');
 				return tk;
 			}
 		}
 		const agt = await env.TOKEN_KV.get('accessTokenTime');
+		//	console.info(agt);
 		if (Math.floor((agt - Date.now()) / 1000) - 100 < 0) {
-			console.log('AccessToken 失效，尝试获取新Token');
+			console.info('AccessToken 失效，尝试获取新Token');
 			msAccessToken = await this.refreshAccessToken(env);
 		}
 
@@ -313,7 +314,7 @@ export default {
 		} catch (error) {
 			if (error.message.includes('XBL Auth Error')) {
 				// A more specific error check might be needed
-				console.log('Xbox Token获取失败，正在尝试刷新访问令牌。');
+				console.info('Xbox Token获取失败，正在尝试刷新访问令牌。');
 				const newAccessToken = await this.refreshAccessToken(env);
 				return await this.fetchXboxToken(newAccessToken, type, env);
 			} else {
@@ -323,7 +324,7 @@ export default {
 	},
 
 	async fetchXboxToken(msAccessToken, type, env) {
-		console.log('Xbox Token 失效，尝试获取新Token');
+		console.info('Xbox Token 失效，尝试获取新Token');
 		try {
 			const xblResponse = await fetch(Endpoints.XboxUserAuth, {
 				method: 'POST',
@@ -366,7 +367,7 @@ export default {
 
 			const token = `XBL3.0 x=${userHash};${xstsToken}`;
 			await env.TOKEN_KV.put(`XboxToken_${type}`, token, { expirationTtl: ttlInSeconds });
-			console.log('Xbox Token TTL:', ttlInSeconds);
+			console.info('Xbox Token TTL:', ttlInSeconds);
 			return token;
 		} catch (e) {
 			console.error('FetchXboxToken() => ', e);
@@ -417,7 +418,7 @@ export default {
 		const ttlInSeconds = Math.max(60, Math.floor((MCtokenexpiryTime - now) / 1000) - 300); // 5 min buffer
 
 		await env.TOKEN_KV.put('mcToken', mcToken, { expirationTtl: ttlInSeconds });
-		console.log(`成功缓存MC Token TTL: ${ttlInSeconds}s`);
+		console.info(`成功缓存MC Token TTL: ${ttlInSeconds}s`);
 		return { mcToken, validUntil };
 	},
 };
