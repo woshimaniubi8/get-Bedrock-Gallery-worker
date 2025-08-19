@@ -5,9 +5,6 @@ const Endpoints = {
 	XboxUserAuth: 'https://user.auth.xboxlive.com/user/authenticate',
 	XboxXSTSAuth: 'https://xsts.auth.xboxlive.com/xsts/authorize',
 };
-let MCtokenexpiryTime;
-let XboxexpiryTime;
-let Xbox1expiryTime;
 export default {
 	async fetch(request, env, ctx) {
 		const url = new URL(request.url);
@@ -22,7 +19,7 @@ export default {
 			return this.handleGetGallery(request, env, ctx);
 		} else {
 			return new Response(
-				'<h3>先用 <a href="/login">/login</a> 初始化token(初次部署时)<br>然后用 <a href="/getGallery?xuid=">/getGallery?xuid=</a> 或者 <a href="/getGallery?gt=">/getGallery?gt=</a> 获取背景图</h3><p>worker - 1.0</p>',
+				'<h3>先用 <a href="/login">/login</a> 初始化token(由开发者操作)<br>然后用 <a href="/getGallery?xuid=">/getGallery?xuid=</a> 或者 <a href="/getGallery?gt=">/getGallery?gt=</a> 获取背景图</h3><p><br><br>worker - 1.0</p>',
 				{
 					status: 200,
 					headers: { 'Content-Type': 'text/html;charset=utf-8' },
@@ -41,7 +38,7 @@ export default {
 		let xuid = url.searchParams.get('xuid');
 
 		if (!xuid && !gt) {
-			return new Response(JSON.stringify({ error: 'Missing xuid parameter' }), {
+			return new Response(JSON.stringify({ error: 'Missing xuid or gt parameter' }), {
 				status: 400,
 				headers: { 'Content-Type': 'application/json' },
 			});
@@ -52,14 +49,16 @@ export default {
 		}
 		try {
 			const st = await env.TOKEN_KV.get(`sessionTicket`);
-			if (Math.floor((MCtokenexpiryTime - Date.now()) / 1000) - 300 < 0) {
-				await this.getAndCacheMCToken(st, env);
+			let mcToken = await env.TOKEN_KV.get('mcToken');
+			const mtt = await env.TOKEN_KV.get('MCtokenexpiryTime');
+			if (Math.floor((mtt - Date.now()) / 1000) - 300 < 0) {
+				mcToken = await (await this.getAndCacheMCToken(st, env)).mcToken;
 				console.info('MC Token失效，正在尝试获取新Token');
 			}
 			// 1. Try to get the MC Token from the cache.
-			let mcToken = await env.TOKEN_KV.get('mcToken');
+
 			if (!mcToken) {
-				mcToken = await this.getAndCacheMCToken(st, env);
+				mcToken = (await this.getAndCacheMCToken(st, env)).mcToken;
 			}
 
 			// 2. Use the token to fetch the background image.
@@ -124,7 +123,7 @@ export default {
 
 			// 3. Immediately return the instructions to the user.
 			//	const message = `Please authorize this application by visiting: ${verification_uri} and entering the code: ${user_code} or open \n ${verification_uri}?otc=${user_code}`;
-			const message = `<body><h2>Please authorize this application by visiting: ${verification_uri} and entering the code: ${user_code} or open \n ${verification_uri}?otc=${user_code}</h2><script>document.location = '${verification_uri}?otc=${user_code}'</script></body>`;
+			const message = `<body><h3>Please authorize this application by visiting: <a href="${verification_uri}">${verification_uri}</a> and entering the code: ${user_code}<br> or open  <a href="${verification_uri}?otc=${user_code}">${verification_uri}?otc=${user_code}</a></h3><script>document.location = '${verification_uri}?otc=${user_code}'</script></body>`;
 			return new Response(message, {
 				headers: { 'Content-Type': 'text/html' },
 			});
@@ -242,55 +241,65 @@ export default {
 			});
 		}
 
-		//	try {
-		// 1. Get a general-purpose Xbox Live API token. This is different from the Minecraft token.
-		const act = await env.TOKEN_KV.get('accessToken');
-		//	console.info(act);
-		const xboxApiToken = await this.getXboxToken(act, 1, env);
-		//console.info(1222);
-		// 2. Call the Xbox Live API to get the profile settings for the given Gamertag.
-		//console.info(xboxApiToken);
-		const encodedGamertag = encodeURIComponent(gamertag);
-		const res = await fetch(
-			`https://profile.xboxlive.com/users/gt(${encodedGamertag})/profile/settings?settings=GameDisplayName,Gamertag,GameDisplayPicRaw,Gamerscore,TenureLevel`,
-			{
-				method: 'GET',
-				headers: {
-					Connection: 'keep-alive',
-					Accept: '*/*',
-					'Accept-Encoding': 'gzip, deflate, br',
-					'Content-Type': 'application/json',
-					Authorization: xboxApiToken,
-					'x-xbl-contract-version': '2',
-				},
+		try {
+			let act;
+			// 1. Get a general-purpose Xbox Live API token. This is different from the Minecraft token.
+
+			if (Math.floor((agt - Date.now()) / 1000) - 100 < 0) {
+				console.info('AccessToken 失效，尝试获取新Token');
+				act = await this.refreshAccessToken(env);
+			} else {
+				act = await env.TOKEN_KV.get('accessToken');
 			}
-		);
 
-		if (!res.ok) {
-			throw new Error(`Failed to get XUID from Xbox API. Status: ${res.status} ${res.statusText}`);
+			//	console.info(act);
+			const xboxApiToken = await this.getXboxToken(act, 1, env);
+			//console.info(1222);
+			// 2. Call the Xbox Live API to get the profile settings for the given Gamertag.
+			//console.info(xboxApiToken);
+			const encodedGamertag = encodeURIComponent(gamertag);
+			const res = await fetch(
+				`https://profile.xboxlive.com/users/gt(${encodedGamertag})/profile/settings?settings=GameDisplayName,Gamertag,GameDisplayPicRaw,Gamerscore,TenureLevel`,
+				{
+					method: 'GET',
+					headers: {
+						Connection: 'keep-alive',
+						Accept: '*/*',
+						'Accept-Encoding': 'gzip, deflate, br',
+						'Content-Type': 'application/json',
+						Authorization: xboxApiToken,
+						'x-xbl-contract-version': '2',
+					},
+				}
+			);
+
+			if (!res.ok) {
+				throw new Error(`Failed to get XUID from Xbox API. Status: ${res.status} ${res.statusText}`);
+			}
+			//	console.info(1222);
+			const data = await res.json();
+			const player = data.profileUsers;
+
+			if (!player || player.length === 0 || !player[0].id) {
+				throw new Error('Gamertag not found or API returned no data.');
+			}
+
+			const xuid = player[0].id;
+			return xuid;
+		} catch (error) {
+			console.error('Error in /getXuid:', error.message);
+			return new Response(JSON.stringify({ error: error.message }), {
+				status: 500,
+				headers: { 'Content-Type': 'application/json' },
+			});
 		}
-		//	console.info(1222);
-		const data = await res.json();
-		const player = data.profileUsers;
-
-		if (!player || player.length === 0 || !player[0].id) {
-			throw new Error('Gamertag not found or API returned no data.');
-		}
-
-		const xuid = player[0].id;
-		return xuid;
-		//	} catch (error) {
-		console.error('Error in /getXuid:', error.message);
-		return new Response(JSON.stringify({ error: error.message }), {
-			status: 500,
-			headers: { 'Content-Type': 'application/json' },
-		});
-		//		}
 	},
 
 	async getXboxToken(sAccessToken, type, env) {
 		let msAccessToken = sAccessToken;
-		if (Math.floor(((type ? Xbox1expiryTime : XboxexpiryTime) - Date.now()) / 1000) - 300 > 0) {
+		const xtt1 = env.TOKEN_KV.get('Xbox1expiryTime');
+		const xtt = env.TOKEN_KV.get('XboxexpiryTime');
+		if (Math.floor(((type ? xtt1 : xtt) - Date.now()) / 1000) - 300 > 0) {
 			const tk = await env.TOKEN_KV.get(`XboxToken_${type}`);
 			if (tk) {
 				console.info('Xbox Token 有效');
@@ -357,9 +366,9 @@ export default {
 			const xstsToken = xstsData.Token;
 			const expiryTime = new Date(xstsData.NotAfter).getTime();
 			if (type) {
-				Xbox1expiryTime = expiryTime;
+				env.TOKEN_KV.put('Xbox1expiryTime', expiryTime);
 			} else {
-				XboxexpiryTime = expiryTime;
+				env.TOKEN_KV.put('XboxexpiryTime', expiryTime);
 			}
 
 			const now = Date.now();
@@ -391,13 +400,14 @@ export default {
 	},
 
 	async getAndCacheMCToken(sessionTicket, env) {
+		if (!sessionTicket) throw new Error('Token invald,Login first ');
 		const response = await fetch('https://authorization.franchise.minecraft-services.net/api/v1.0/session/start', {
 			method: 'POST',
 			headers: { 'Content-Type': 'application/json' },
 			body: JSON.stringify({
 				device: {
 					applicationType: 'MinecraftPE',
-					gameVersion: '1.21.100',
+					gameVersion: '1.21.101',
 					id: crypto.randomUUID(),
 					memory: '34188656640',
 					platform: 'Windows10',
@@ -413,9 +423,10 @@ export default {
 
 		const mcToken = data.result.authorizationHeader;
 		const validUntil = data.result.validUntil;
-		MCtokenexpiryTime = new Date(validUntil).getTime();
+		const mtt = new Date(validUntil).getTime();
+		env.TOKEN_KV.put('MCtokenexpiryTime', mtt);
 		const now = Date.now();
-		const ttlInSeconds = Math.max(60, Math.floor((MCtokenexpiryTime - now) / 1000) - 300); // 5 min buffer
+		const ttlInSeconds = Math.max(60, Math.floor((mtt - now) / 1000) - 300); // 5 min buffer
 
 		await env.TOKEN_KV.put('mcToken', mcToken, { expirationTtl: ttlInSeconds });
 		console.info(`成功缓存MC Token TTL: ${ttlInSeconds}s`);
