@@ -57,9 +57,9 @@ export default {
 				console.log('MC Token失效，正在尝试获取新Token');
 			}
 			// 1. Try to get the MC Token from the cache.
-			const mcToken = await env.TOKEN_KV.get('mcToken');
+			let mcToken = await env.TOKEN_KV.get('mcToken');
 			if (!mcToken) {
-				throw new Error('Token not found. Please visit the /login endpoint first to authorize the application.');
+				mcToken = await this.getAndCacheMCToken(st, env);
 			}
 
 			// 2. Use the token to fetch the background image.
